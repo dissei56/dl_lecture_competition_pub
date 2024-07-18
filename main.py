@@ -127,8 +127,15 @@ def main(args: DictConfig):
             batch: Dict[str, Any]
             event_image = batch["event_volume"].to(device) # [B, 4, 480, 640]
             ground_truth_flow = batch["flow_gt"].to(device) # [B, 2, 480, 640]
-            flow = model(event_image) # [B, 2, 480, 640]
-            loss: torch.Tensor = compute_epe_error(flow, ground_truth_flow)
+            
+            # Multi-scale supervision
+            predicted_flows = model(event_image)  # リストとして各スケールの出力を取得
+            loss = 0
+            for pred_flow in predicted_flows:
+                scale_factor = ground_truth_flow.shape[-1] / pred_flow.shape[-1]
+                scaled_gt_flow = torch.nn.functional.interpolate(ground_truth_flow, scale_factor=1/scale_factor, mode='bilinear', align_corners=True)
+                loss += compute_epe_error(pred_flow, scaled_gt_flow)
+            
             print(f"batch {i} loss: {loss.item()}")
             optimizer.zero_grad()
             loss.backward()
@@ -157,7 +164,7 @@ def main(args: DictConfig):
         for batch in tqdm(test_data):
             batch: Dict[str, Any]
             event_image = batch["event_volume"].to(device)
-            batch_flow = model(event_image) # [1, 2, 480, 640]
+            batch_flow = model(event_image)[0]  # [1, 2, 480, 640]
             flow = torch.cat((flow, batch_flow), dim=0)  # [N, 2, 480, 640]
         print("test done")
     # ------------------
@@ -168,3 +175,4 @@ def main(args: DictConfig):
 
 if __name__ == "__main__":
     main()
+
